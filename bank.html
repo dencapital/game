@@ -1,0 +1,177 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Банк → игра: настройка</title>
+<style>
+:root{--bg:#12141a;--card:#191c24;--line:#2b3040;--txt:#e8eaf0;--dim:#98a0b3;--gold:#e0a94a;--acc:#e0894a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:18px 16px 60px;max-width:760px;margin:0 auto}
+h1{font-size:23px;margin:6px 0 4px}
+h2{font-size:17px;margin:26px 0 8px;color:var(--gold)}
+p,li{color:#d3d7e2}
+.lead{color:var(--dim);font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin:12px 0}
+ol{padding-left:20px}li{margin:7px 0}
+code{background:#0d0f14;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:14px}
+pre{background:#0d0f14;border:1px solid var(--line);border-radius:12px;padding:12px;overflow:auto;font-size:12px;line-height:1.45;max-height:340px}
+button{background:var(--acc);color:#111;border:0;border-radius:10px;padding:11px 16px;font-size:15px;font-weight:600;cursor:pointer}
+.b2{background:transparent;color:var(--txt);border:1px solid var(--line)}
+.note{border-left:3px solid var(--gold);padding-left:12px;color:var(--dim);font-size:14px}
+.step{display:inline-block;background:var(--acc);color:#111;width:24px;height:24px;border-radius:50%;text-align:center;line-height:24px;font-weight:700;font-size:14px;margin-right:6px}
+a{color:var(--acc)}
+</style></head><body>
+
+<h1>Банк → игра</h1>
+<p class="lead">Настраивается один раз, минут пять. Дальше iPhone сам отправляет каждую банковскую SMS в твою финансовую таблицу: сумма, время, куда ушли деньги — определяются автоматически. Тебе остаётся заполнить одну колонку — «на что».</p>
+
+<div class="card note">iOS не даёт ни одному приложению читать SMS — это ограничение самой системы, а не игры. Поэтому цепочка: <b>SMS → «Команды» на iPhone → твоя таблица → робот дважды в день → игра</b>.</div>
+
+<h2><span class="step">1</span>Скрипт в таблице</h2>
+<div class="card">
+<ol>
+<li>Открой свою таблицу личных финансов на компьютере.</li>
+<li>Меню <b>Расширения → Apps Script</b>.</li>
+<li>Сотри всё, что там есть, и вставь код (кнопка ниже копирует его целиком).</li>
+<li><button onclick="cp()" id="cpb">Скопировать код</button></li>
+<li>Сохрани (⌘S). Затем <b>Начать развёртывание → Новое развёртывание</b>.</li>
+<li>Тип — <b>Веб-приложение</b>. «Запуск от имени» — <b>я</b>. «У кого есть доступ» — <b>у всех</b>.</li>
+<li>«Развернуть» → Google спросит разрешение: <b>Дополнительные настройки → Перейти к проекту</b> → Разрешить.</li>
+<li>Скопируй <b>URL веб-приложения</b> — длинный, оканчивается на <code>/exec</code>. Он понадобится на шаге 2.</li>
+</ol>
+<p class="note">«Доступ у всех» = по этому адресу можно только <i>дописать строку</i>. Прочитать таблицу или что-то удалить через него нельзя. Просто не публикуй адрес.</p>
+<details><summary style="cursor:pointer;color:var(--dim);font-size:14px">Показать код</summary>
+<pre id="code">/** Банковские SMS → лист «SMS_БАНК» этой таблицы. Ставится через Расширения → Apps Script. */
+var TAB  = &#x27;SMS_БАНК&#x27;;
+var HEAD = [&#x27;время&#x27;,&#x27;банк&#x27;,&#x27;сумма&#x27;,&#x27;валюта&#x27;,&#x27;тип&#x27;,&#x27;контрагент&#x27;,&#x27;НА ЧТО (заполняешь ты)&#x27;,&#x27;остаток после&#x27;,&#x27;текст SMS&#x27;];
+
+function doPost(e) {
+  var p = (e &amp;&amp; e.parameter) || {};
+  var text = p.text || &#x27;&#x27;, sender = p.sender || &#x27;&#x27;;
+  if (!text) return ContentService.createTextOutput(&#x27;empty&#x27;);
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(TAB);
+  if (!sh) {
+    sh = ss.insertSheet(TAB);
+    sh.appendRow(HEAD);
+    sh.setFrozenRows(1);
+    sh.getRange(1, 1, 1, HEAD.length).setFontWeight(&#x27;bold&#x27;);
+    sh.setColumnWidth(7, 220);
+    sh.setColumnWidth(9, 420);
+  }
+
+  // дедуп: та же SMS за последние 5 минут (банки любят дублировать)
+  var last = sh.getLastRow();
+  if (last &gt; 1) {
+    var n = Math.min(20, last - 1);
+    var prev = sh.getRange(last - n + 1, 1, n, HEAD.length).getValues();
+    var now = new Date().getTime();
+    for (var i = 0; i &lt; prev.length; i++) {
+      var t0 = (prev[i][0] instanceof Date) ? prev[i][0].getTime() : 0;
+      if (prev[i][8] === text &amp;&amp; now - t0 &lt; 5 * 60 * 1000) return ContentService.createTextOutput(&#x27;dup&#x27;);
+    }
+  }
+
+  var r = parseSms(text);
+  sh.appendRow([new Date(), sender, r.amount, r.cur, r.type, r.who, &#x27;&#x27;, r.bal, text]);
+  return ContentService.createTextOutput(&#x27;ok&#x27;);
+}
+
+function parseSms(s) {
+  var t = String(s).replace(/ /g, &#x27; &#x27;);
+  var cur = /IDR|\bRp\b/i.test(t) ? &#x27;IDR&#x27;
+          : /USD|\$/.test(t)      ? &#x27;USD&#x27;
+          : /RUB|руб|₽/i.test(t)  ? &#x27;RUB&#x27;
+          : /THB|บาท/i.test(t)    ? &#x27;THB&#x27; : &#x27;&#x27;;
+  var type = /(kredit|masuk|diterima|incoming|refund|зачислен|поступлен|пополнен|возврат)/i.test(t) ? &#x27;приход&#x27;
+           : /(debit|tarik|pembelian|pembayaran|transfer|purchase|payment|withdraw|оплата|покупка|списан|снятие|перевод)/i.test(t) ? &#x27;расход&#x27; : &#x27;&#x27;;
+  return { amount: pickAmount(t), cur: cur, type: type, who: pickWho(t), bal: pickBalance(t) };
+}
+
+function toNum(x) {                      // 1.500.000,50 | 1,500,000.50 | 1500000
+  x = String(x).trim().replace(/\s/g, &#x27;&#x27;);
+  if (/,\d{1,2}$/.test(x))      x = x.replace(/\./g, &#x27;&#x27;).replace(&#x27;,&#x27;, &#x27;.&#x27;);
+  else if (/\.\d{1,2}$/.test(x)) x = x.replace(/,/g, &#x27;&#x27;);
+  else                           x = x.replace(/[.,]/g, &#x27;&#x27;);
+  var v = parseFloat(x.replace(/[^\d.]/g, &#x27;&#x27;));
+  return isNaN(v) ? &#x27;&#x27; : v;
+}
+
+function pickAmount(t) {
+  var re = /(?:IDR|Rp|USD|\$|RUB|₽|руб\.?|THB)\s*([\d][\d.,\s]{1,20})/ig, m, all = [];
+  while ((m = re.exec(t))) all.push(toNum(m[1]));
+  if (!all.length) {
+    var re2 = /([\d][\d.,\s]{1,20})\s*(?:IDR|Rp|USD|RUB|₽|руб\.?|THB)/ig;
+    while ((m = re2.exec(t))) all.push(toNum(m[1]));
+  }
+  if (all.length) return all[0];         // первая сумма в тексте = сама операция, дальше обычно остаток
+  var m3 = t.match(/[\d][\d.,]{3,20}/);
+  return m3 ? toNum(m3[0]) : &#x27;&#x27;;
+}
+
+function pickBalance(t) {
+  var m = t.match(/(?:saldo|sisa|balance|остаток|доступно)[^\d]{0,25}([\d][\d.,\s]{1,20})/i);
+  return m ? toNum(m[1]) : &#x27;&#x27;;
+}
+
+function pickWho(t) {
+  var m = t.match(/\b(?:di|at|to|ke|kepada|в|на)\s+([A-ZА-Я0-9][^\n,.;]{2,30})/);
+  if (m) return m[1].trim();
+  var m2 = t.match(/\b([A-Z][A-Z0-9&amp;&#x27;\-\. ]{3,25})\b/);
+  return m2 ? m2[1].trim() : &#x27;&#x27;;
+}
+
+/** Проверка без телефона: запусти эту функцию — в лист упадёт тестовая строка. */
+function ТЕСТ() {
+  doPost({ parameter: {
+    sender: &#x27;ТЕСТ&#x27;,
+    text: &#x27;Pembelian dgn Kartu Debit di ALFAMART BALI IDR 250.000 pada 14:32. Saldo IDR 12.480.000&#x27;
+  }});
+}
+</pre></details>
+</div>
+
+<h2><span class="step">2</span>Автоматизация на iPhone</h2>
+<div class="card">
+<ol>
+<li>Приложение <b>«Команды»</b> → вкладка <b>«Автоматизация»</b> → <b>+</b>.</li>
+<li>Триггер — <b>«Сообщение»</b>.</li>
+<li><b>Отправитель</b> — имя банка, как он подписан в SMS (например <code>Permata</code>, <code>Mandiri</code>, <code>BCA</code>, <code>Sber</code>). На каждый банк — своя автоматизация, они складываются в одну таблицу.</li>
+<li>Внизу выбери <b>«Запускать сразу»</b>, тумблер «Спрашивать перед запуском» — выключить.</li>
+<li><b>Далее → Новая пустая команда → Добавить действие → «Получить содержимое URL»</b>.</li>
+<li>В действии: URL — тот самый адрес из шага 1. Разверни стрелку «Показать больше»:
+  <ul>
+  <li><b>Метод</b> — <code>POST</code></li>
+  <li><b>Тело запроса</b> — <code>Форма</code></li>
+  <li>поле <code>text</code> → значение — переменная <b>«Сообщение»</b></li>
+  <li>поле <code>sender</code> → значение — переменная <b>«Отправитель»</b></li>
+  </ul>
+</li>
+<li>Готово.</li>
+</ol>
+<p class="note">Проверить без ожидания SMS: в Apps Script выбери функцию <code>ТЕСТ</code> и нажми «Выполнить» — в таблице появится лист <b>SMS_БАНК</b> с разобранной тестовой строкой.</p>
+</div>
+
+<h2><span class="step">3</span>Что дальше делает робот</h2>
+<div class="card">
+<p>Дважды в день — <b>утром в 08:00</b> и <b>вечером в 21:00</b> — он читает лист <b>SMS_БАНК</b> и:</p>
+<ul>
+<li>складывает суммы в доход/расход текущего месяца — блок «Месяц ±» на экране «Сегодня» становится живым;</li>
+<li>переводит IDR в доллары по курсу 18 тыс;</li>
+<li>ловит нештатное — крупное списание, превышение лимита $2 800/мес, непонятную операцию — и выносит это в «три действия на сегодня»;</li>
+<li>то, что ты подписал в колонке <b>«НА ЧТО»</b>, использует как категорию — со временем расходы начнут раскладываться сами.</li>
+</ul>
+<p class="note">Колонку «НА ЧТО» можно не заполнять каждый день — подписывай пачкой раз в неделю, робот подхватит задним числом.</p>
+</div>
+
+<p style="text-align:center;margin-top:26px"><a href="./">← вернуться в игру</a></p>
+
+<script>
+function cp(){
+  var t=document.getElementById('code').textContent;
+  navigator.clipboard.writeText(t).then(function(){
+    var b=document.getElementById('cpb');b.textContent='Скопировано ✓';
+    setTimeout(function(){b.textContent='Скопировать код';},2200);
+  },function(){alert('Не вышло скопировать — открой «Показать код» и выдели вручную');});
+}
+</script>
+</body></html>
